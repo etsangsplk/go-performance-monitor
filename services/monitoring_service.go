@@ -24,6 +24,9 @@ var (
 
 	// LoadAverage
 	loadAverageRegex = regexp.MustCompile(`average[s]?:\s*([0-9.]+)`)
+
+	// Network
+	networkRegex = regexp.MustCompile(`^\s*([a-z0-9]+):\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)`)
 )
 
 func Init(sshConfiguration *models.SshConfiguration) {
@@ -69,7 +72,7 @@ func Init(sshConfiguration *models.SshConfiguration) {
 			serverStatistics.Memory = memory
 		case loadAverage := <-loadAverageChannel:
 			fmt.Printf("LoadAverage: %v\n", loadAverage.Value)
-
+			serverStatistics.LoadAverage = loadAverage
 		default:
 		}
 	}
@@ -195,6 +198,34 @@ func getLoadAverage(client *ssh.Client, resultChannel chan<- models.LoadAverage)
 		}
 	}()
 }
+
+func getNetwork(client *ssh.Client, resultChannel chan<- models.LoadAverage) {
+
+	go func() {
+		session, err := client.NewSession()
+		if err != nil {
+			panic(err)
+		}
+		defer session.Close()
+
+		out, err := session.CombinedOutput("uptime")
+		if err != nil {
+			log.Println("Unable to execute command 'uptime'")
+			resultChannel <- models.LoadAverage{}
+		}
+
+		if loadAverageRegex.Match(out) {
+			for _, value := range loadAverageRegex.FindAllStringSubmatch(string(out), -1) {
+				value, _ := strconv.ParseFloat(value[1], 64)
+				resultChannel <- models.LoadAverage{value}
+			}
+		} else {
+			fmt.Printf("String does not match %v\n", loadAverageRegex)
+			resultChannel <- models.LoadAverage{}
+		}
+	}()
+}
+
 
 func memoryToText(memoryData models.MemoryData) string {
 	total := memoryData.Total - (memoryData.Free + memoryData.Bufferes + memoryData.Cached)
