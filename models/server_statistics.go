@@ -5,4 +5,5 @@ type ServerStatistics struct {
 	Memory      MemoryData
 	LoadAverage LoadAverage
 	Network     NetworkData
+	Disk        DiskData
 }

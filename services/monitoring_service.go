@@ -14,7 +14,6 @@ import (
 var (
 	// CPU
 	cpuOldRegex = regexp.MustCompile(`^cpu \s*([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)`)
-	cpuNewRegex = regexp.MustCompile(`^cpu \s*([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)`)
 
 	// RAM
 	memTotalRegex = regexp.MustCompile(`MemTotal:\s*([0-9]+)`)
@@ -27,6 +26,9 @@ var (
 
 	// Network
 	networkRegex = regexp.MustCompile(`\s*([a-z0-9]+):\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)`)
+
+	// Disk
+	diskRegex = regexp.MustCompile(`(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%`)
 )
 
 func Init(sshConfiguration *models.SshConfiguration) {
@@ -46,6 +48,7 @@ func Init(sshConfiguration *models.SshConfiguration) {
 	memoryChannel := make(chan models.MemoryData)
 	loadAverageChannel := make(chan models.LoadAverage)
 	networkChannel := make(chan models.NetworkData)
+	diskChannel := make(chan models.DiskData)
 
 	ticker := time.NewTicker(time.Second)
 	go func() {
@@ -54,6 +57,7 @@ func Init(sshConfiguration *models.SshConfiguration) {
 			getMemoryData(client, memoryChannel)
 			getLoadAverage(client, loadAverageChannel)
 			getNetwork(client, networkChannel)
+			getDiskData(client, diskChannel)
 		}
 	}()
 
@@ -78,6 +82,9 @@ func Init(sshConfiguration *models.SshConfiguration) {
 		case networkData := <-networkChannel:
 			fmt.Println(networkData)
 			serverStatistics.Network = networkData
+		case diskData := <-diskChannel:
+			fmt.Println(diskData)
+			serverStatistics.Disk = diskData
 		default:
 		}
 	}
@@ -237,6 +244,37 @@ func getNetwork(client *ssh.Client, resultChannel chan<- models.NetworkData) {
 
 		result.LastUpdate = time.Now()
 		resultChannel <- result
+	}()
+}
+
+func getDiskData(client *ssh.Client, resultChannel chan<- models.DiskData) {
+
+	go func() {
+		session, err := client.NewSession()
+		if err != nil {
+			panic(err)
+		}
+		defer session.Close()
+
+		out, err := session.CombinedOutput("df | grep ' /$'")
+		if err != nil {
+			log.Println("Unable to execute command 'df | grep ' /$''")
+			resultChannel <- models.DiskData{}
+		}
+
+		if diskRegex.Match(out) {
+			for _, value := range diskRegex.FindAllStringSubmatch(string(out), -1) {
+				size, _ := strconv.ParseFloat(value[1], 64)
+				use, _ := strconv.ParseFloat(value[2], 64)
+				available, _ := strconv.ParseFloat(value[3], 64)
+				useInPercent, _ := strconv.ParseFloat(value[4], 64)
+
+				resultChannel <- models.DiskData{size, use, available, useInPercent}
+			}
+		} else {
+			fmt.Printf("String does not match %v\n", diskRegex)
+			resultChannel <- models.DiskData{}
+		}
 	}()
 }
 
