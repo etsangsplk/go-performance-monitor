@@ -26,7 +26,7 @@ var (
 	loadAverageRegex = regexp.MustCompile(`average[s]?:\s*([0-9.]+)`)
 
 	// Network
-	networkRegex = regexp.MustCompile(`^\s*([a-z0-9]+):\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)`)
+	networkRegex = regexp.MustCompile(`\s*([a-z0-9]+):\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)\s*([0-9]+)`)
 )
 
 func Init(sshConfiguration *models.SshConfiguration) {
@@ -45,6 +45,7 @@ func Init(sshConfiguration *models.SshConfiguration) {
 	cpuChannel := make(chan models.CpuData)
 	memoryChannel := make(chan models.MemoryData)
 	loadAverageChannel := make(chan models.LoadAverage)
+	networkChannel := make(chan models.NetworkData)
 
 	ticker := time.NewTicker(time.Second)
 	go func() {
@@ -52,6 +53,7 @@ func Init(sshConfiguration *models.SshConfiguration) {
 			getCpuData(client, cpuChannel)
 			getMemoryData(client, memoryChannel)
 			getLoadAverage(client, loadAverageChannel)
+			getNetwork(client, networkChannel)
 		}
 	}()
 
@@ -73,6 +75,9 @@ func Init(sshConfiguration *models.SshConfiguration) {
 		case loadAverage := <-loadAverageChannel:
 			fmt.Printf("LoadAverage: %v\n", loadAverage.Value)
 			serverStatistics.LoadAverage = loadAverage
+		case networkData := <-networkChannel:
+			fmt.Println(networkData)
+			serverStatistics.Network = networkData
 		default:
 		}
 	}
@@ -199,7 +204,7 @@ func getLoadAverage(client *ssh.Client, resultChannel chan<- models.LoadAverage)
 	}()
 }
 
-func getNetwork(client *ssh.Client, resultChannel chan<- models.LoadAverage) {
+func getNetwork(client *ssh.Client, resultChannel chan<- models.NetworkData) {
 
 	go func() {
 		session, err := client.NewSession()
@@ -208,24 +213,32 @@ func getNetwork(client *ssh.Client, resultChannel chan<- models.LoadAverage) {
 		}
 		defer session.Close()
 
-		out, err := session.CombinedOutput("uptime")
+		result := models.NetworkData{}
+		result.InterfaceData = make([]models.NetworkInterfaceData, 0)
+
+		out, err := session.CombinedOutput("cat /proc/net/dev")
 		if err != nil {
-			log.Println("Unable to execute command 'uptime'")
-			resultChannel <- models.LoadAverage{}
+			log.Println("Unable to execute command 'cat /proc/net/dev'")
+			resultChannel <- result
 		}
 
-		if loadAverageRegex.Match(out) {
-			for _, value := range loadAverageRegex.FindAllStringSubmatch(string(out), -1) {
-				value, _ := strconv.ParseFloat(value[1], 64)
-				resultChannel <- models.LoadAverage{value}
+		if networkRegex.Match(out) {
+			for _, value := range networkRegex.FindAllStringSubmatch(string(out), -1) {
+				name := value[1]
+				rx, _ := strconv.ParseFloat(value[2], 64)
+				tx, _ := strconv.ParseFloat(value[10], 64)
+
+				interfaceData := models.NetworkInterfaceData{Name: name, Rx: rx, Tx: tx}
+				result.InterfaceData = append(result.InterfaceData, interfaceData)
 			}
 		} else {
-			fmt.Printf("String does not match %v\n", loadAverageRegex)
-			resultChannel <- models.LoadAverage{}
+			fmt.Printf("String does not match %v\n", networkRegex)
 		}
+
+		result.LastUpdate = time.Now()
+		resultChannel <- result
 	}()
 }
-
 
 func memoryToText(memoryData models.MemoryData) string {
 	total := memoryData.Total - (memoryData.Free + memoryData.Bufferes + memoryData.Cached)
