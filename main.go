@@ -9,12 +9,11 @@ import (
 )
 
 const (
-	configurationFile = "/Users/patrickkolodziej/dev/projects/go/src/github.com/koloo91/performance_monitor/conf/conf.json"
+	configurationFile = "conf/conf.json"
 )
 
 var waitGroup sync.WaitGroup
 
-// CPU cat /proc/stat
 func main() {
 	configuration := loadConfiguration()
 

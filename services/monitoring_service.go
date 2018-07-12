@@ -21,10 +21,12 @@ var (
 	buffersRegex  = regexp.MustCompile(`Buffers:\s*([0-9]+)`)
 	freeRamRegex  = regexp.MustCompile(`MemFree:\s*([0-9]+)`)
 	cachedRegex   = regexp.MustCompile(`Cached:\s*([0-9]+)`)
+
+	// LoadAverage
+	loadAverageRegex = regexp.MustCompile(`average[s]?:\s*([0-9.]+)`)
 )
 
 func Init(sshConfiguration *models.SshConfiguration) {
-
 	fmt.Println(*sshConfiguration)
 
 	serverWithPort := fmt.Sprintf("%s:%d", sshConfiguration.Server, sshConfiguration.Port)
@@ -39,12 +41,14 @@ func Init(sshConfiguration *models.SshConfiguration) {
 
 	cpuChannel := make(chan models.CpuData)
 	memoryChannel := make(chan models.MemoryData)
+	loadAverageChannel := make(chan models.LoadAverage)
 
 	ticker := time.NewTicker(time.Second)
 	go func() {
 		for range ticker.C {
 			getCpuData(client, cpuChannel)
 			getMemoryData(client, memoryChannel)
+			getLoadAverage(client, loadAverageChannel)
 		}
 	}()
 
@@ -63,13 +67,15 @@ func Init(sshConfiguration *models.SshConfiguration) {
 		case memory := <-memoryChannel:
 			fmt.Println(memoryToText(memory))
 			serverStatistics.Memory = memory
+		case loadAverage := <-loadAverageChannel:
+			fmt.Printf("LoadAverage: %v\n", loadAverage.Value)
+
 		default:
 		}
 	}
 }
 
 func getCpuData(client *ssh.Client, resultChannel chan<- models.CpuData) {
-
 	go func() {
 		session, err := client.NewSession()
 		if err != nil {
@@ -160,6 +166,33 @@ func getMemoryData(client *ssh.Client, resultChannel chan<- models.MemoryData) {
 		}
 
 		resultChannel <- memoryData
+	}()
+}
+
+func getLoadAverage(client *ssh.Client, resultChannel chan<- models.LoadAverage) {
+
+	go func() {
+		session, err := client.NewSession()
+		if err != nil {
+			panic(err)
+		}
+		defer session.Close()
+
+		out, err := session.CombinedOutput("uptime")
+		if err != nil {
+			log.Println("Unable to execute command 'uptime'")
+			resultChannel <- models.LoadAverage{}
+		}
+
+		if loadAverageRegex.Match(out) {
+			for _, value := range loadAverageRegex.FindAllStringSubmatch(string(out), -1) {
+				value, _ := strconv.ParseFloat(value[1], 64)
+				resultChannel <- models.LoadAverage{value}
+			}
+		} else {
+			fmt.Printf("String does not match %v\n", loadAverageRegex)
+			resultChannel <- models.LoadAverage{}
+		}
 	}()
 }
 

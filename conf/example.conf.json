@@ -1,0 +1,10 @@
+{
+  "sshConfigurations": [
+    {
+      "userName": "userName",
+      "password": "S3cr3t",
+      "server": "192.168.178.49",
+      "port": 22
+    }
+  ]
+}
